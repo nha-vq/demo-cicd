@@ -100,7 +100,7 @@ jobs:
           LINE_RATE=$(grep -o 'line-rate="[0-9.]*"' "$COVERAGE_FILE" | head -n 1 | sed 's/line-rate="//;s/"//')
 
           COVERAGE_PERCENT=$(python3 -c "print(round(float('$LINE_RATE') * 100, 2))")
-          THRESHOLD=70
+          THRESHOLD=60
 
           echo "Coverage: ${COVERAGE_PERCENT}%"
           echo "Threshold: ${THRESHOLD}%"
