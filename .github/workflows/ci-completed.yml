@@ -8,23 +8,23 @@ on:
 permissions:
   contents: read
   checks: write
-  
+
 jobs:
   build-test-main:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout the latest code from main branch
+      # Checkout the latest code from the main branch
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # Install the required .NET SDK
+      # Install the required .NET SDK version
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
-      # Cache NuGet dependencies to optimize build time
+      # Cache NuGet packages to speed up future builds
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -33,7 +33,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      # Restore dependencies for the application
+      # Restore dependencies for the main application project
       - name: Restore app project
         run: dotnet restore ./DemoSonarApp/DemoSonarApp.csproj
 
@@ -41,7 +41,7 @@ jobs:
       - name: Restore test project
         run: dotnet restore ./DemoSonarApp.Tests/DemoSonarApp.Tests.csproj
 
-      # Build the application project
+      # Build the main application project
       - name: Build app project
         run: dotnet build ./DemoSonarApp/DemoSonarApp.csproj --configuration Release --no-restore
 
@@ -49,16 +49,17 @@ jobs:
       - name: Build test project
         run: dotnet build ./DemoSonarApp.Tests/DemoSonarApp.Tests.csproj --configuration Release --no-restore
 
-      # Execute unit tests and output results in TRX format
-      - name: Run unit tests
+      # Run unit tests, generate test result (.trx), and collect code coverage
+      - name: Run unit tests with coverage
         run: >
           dotnet test ./DemoSonarApp.Tests/DemoSonarApp.Tests.csproj
           --configuration Release
           --no-build
           --logger "trx;LogFileName=test-results.trx"
           --results-directory ./test-results
+          --collect:"XPlat Code Coverage"
 
-      # Publish test results so they appear in GitHub UI
+      # Publish test results to GitHub UI (visible in Checks tab)
       - name: Publish test results
         uses: dorny/test-reporter@v1
         if: always()
@@ -67,7 +68,56 @@ jobs:
           path: ./test-results/*.trx
           reporter: dotnet-trx
 
-      # Publish compiled application output (ready for deployment)
+      # Upload coverage report as artifact for later inspection
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: '**/coverage.cobertura.xml'
+          retention-days: 7
+
+      # Fail the pipeline if code coverage is below the required threshold
+      - name: Enforce coverage threshold
+        if: always()
+        shell: bash
+        run: |
+          COVERAGE_FILE=$(find . -name 'coverage.cobertura.xml' | head -n 1)
+
+          echo "=== Coverage Quality Gate ==="
+          echo "## Coverage Quality Gate" >> $GITHUB_STEP_SUMMARY
+
+          if [ -z "$COVERAGE_FILE" ]; then
+            echo "Coverage file not found!"
+            echo "- Coverage file not found!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          LINE_RATE=$(grep -o 'line-rate="[0-9.]*"' "$COVERAGE_FILE" | head -n 1 | sed 's/line-rate="//;s/"//')
+
+          COVERAGE_PERCENT=$(python3 -c "print(round(float('$LINE_RATE') * 100, 2))")
+          THRESHOLD=60
+
+          echo "Coverage: ${COVERAGE_PERCENT}%"
+          echo "Threshold: ${THRESHOLD}%"
+
+          echo "- Coverage: ${COVERAGE_PERCENT}%" >> $GITHUB_STEP_SUMMARY
+          echo "- Threshold: ${THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
+
+          if python3 -c "import sys; sys.exit(0 if float('$COVERAGE_PERCENT') >= float('$THRESHOLD') else 1)"; then
+            echo "PASS: Coverage meets threshold"
+            echo "- Result: PASS" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "FAIL: Coverage is below threshold"
+            echo "Reason: ${COVERAGE_PERCENT}% < ${THRESHOLD}%"
+
+            echo "- Result: FAIL" >> $GITHUB_STEP_SUMMARY
+            echo "- Reason: ${COVERAGE_PERCENT}% < ${THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
+
+            exit 1
+          fi
+
+      # Publish the application output for downstream usage such as deployment
       - name: Publish app
         run: >
           dotnet publish ./DemoSonarApp/DemoSonarApp.csproj
@@ -75,7 +125,7 @@ jobs:
           --no-build
           --output ./publish
 
-      # Upload build artifact for later use (e.g., deployment)
+      # Upload the published application as a build artifact
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -83,11 +133,12 @@ jobs:
           path: ./publish
           retention-days: 7
 
-      # Add human-readable summary for demo purposes
+      # Add a summary section to the workflow run for demo readability
       - name: Add summary
         if: always()
         run: |
           echo "## CI Completed Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Build: completed" >> $GITHUB_STEP_SUMMARY
           echo "- Unit tests: see report in Checks tab" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage: validated against 70% threshold" >> $GITHUB_STEP_SUMMARY
           echo "- Artifact: main-build-package" >> $GITHUB_STEP_SUMMARY
