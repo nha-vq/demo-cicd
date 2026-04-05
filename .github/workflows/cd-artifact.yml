@@ -40,6 +40,7 @@ jobs:
         shell: powershell
         run: |
           $pidFile = "C:\deploy\app\app.pid"
+          $port = 5050
 
           if (Test-Path $pidFile) {
             $appPid = Get-Content $pidFile
@@ -47,6 +48,15 @@ jobs:
               Stop-Process -Id $appPid -Force -ErrorAction SilentlyContinue
             }
             Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+          }
+
+          # Extra cleanup: kill any process still listening on deploy port.
+          $listeningPids = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty OwningProcess -Unique
+          foreach ($listeningPid in $listeningPids) {
+            if ($listeningPid -and $listeningPid -ne 0) {
+              Stop-Process -Id $listeningPid -Force -ErrorAction SilentlyContinue
+            }
           }
 
       # Replace deployed files with the new artifact
