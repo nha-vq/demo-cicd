@@ -61,14 +61,22 @@ jobs:
             exit 1
           }
 
+          # Artifact can be extracted either directly in $artifactPath or in a nested folder.
+          $artifactDll = Get-ChildItem -Path $artifactPath -Filter "DemoSonarApp.dll" -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $artifactDll) {
+            Write-Error "Could not find DemoSonarApp.dll under $artifactPath"
+            Get-ChildItem -Path $artifactPath -Recurse -Force | Select-Object FullName
+            exit 1
+          }
+          $sourceRoot = Split-Path -Parent $artifactDll.FullName
+
           if (Test-Path $appPath) {
             Remove-Item "$appPath\*" -Recurse -Force -ErrorAction SilentlyContinue
-          }
-          else {
+          } else {
             New-Item -ItemType Directory -Path $appPath | Out-Null
           }
 
-          Copy-Item "$artifactPath\*" $appPath -Recurse -Force
+          Copy-Item "$sourceRoot\*" $appPath -Recurse -Force
 
       # Start the application from the published artifact
       - name: Start application detached
@@ -79,12 +87,12 @@ jobs:
           $pidFile = Join-Path $appPath "app.pid"
           $stdoutFile = Join-Path $appPath "app.log"
           $stderrFile = Join-Path $appPath "app-error.log"
-      
+
           if (!(Test-Path $dllPath)) {
             Write-Error "Application DLL not found: $dllPath"
             exit 1
           }
-      
+
           if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force -ErrorAction SilentlyContinue }
           if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue }
 
@@ -112,13 +120,12 @@ jobs:
             exit 1
           }
 
-      # Optional debug step to confirm dotnet process is running
       - name: Debug running process
         shell: powershell
         run: |
           Get-Process dotnet -ErrorAction SilentlyContinue
 
-      # Verify application after deployment
+      # Wait and verify the application is running
       - name: Verify deployed app
         shell: powershell
         run: |
