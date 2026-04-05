@@ -76,8 +76,38 @@ jobs:
         run: |
           $appPath = "C:\deploy\app"
           $dllPath = Join-Path $appPath "DemoSonarApp.dll"
-          $command = "cd /d `"$appPath`" && start /b dotnet `"$dllPath`" --urls http://localhost:5050 > app.log 2> app-error.log"
-          cmd /c $command
+          $pidFile = Join-Path $appPath "app.pid"
+          $stdoutFile = Join-Path $appPath "app.log"
+          $stderrFile = Join-Path $appPath "app-error.log"
+      
+          if (!(Test-Path $dllPath)) {
+            Write-Error "Application DLL not found: $dllPath"
+            exit 1
+          }
+      
+          if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue }
+      
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = "dotnet"
+          $psi.WorkingDirectory = $appPath
+          $psi.Arguments = "`"$dllPath`" --urls http://localhost:5050"
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+      
+          # Critical: prevent GitHub runner from tracking and killing this process
+          $psi.EnvironmentVariables.Remove("RUNNER_TRACKING_ID")
+      
+          $process = New-Object System.Diagnostics.Process
+          $process.StartInfo = $psi
+          $process.Start() | Out-Null
+      
+          $process.Id | Out-File $pidFile -Encoding ascii
+      
+          $process.StandardOutput.ReadToEndAsync() | Out-Null
+          $process.StandardError.ReadToEndAsync() | Out-Null
+      
           Start-Sleep -Seconds 8
 
       # Optional debug step to confirm dotnet process is running
