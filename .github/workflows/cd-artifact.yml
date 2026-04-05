@@ -71,24 +71,14 @@ jobs:
           Copy-Item "$artifactPath\*" $appPath -Recurse -Force
 
       # Start the application from the published artifact
-      - name: Start application
+      - name: Start application detached
         shell: powershell
         run: |
           $appPath = "C:\deploy\app"
           $dllPath = Join-Path $appPath "DemoSonarApp.dll"
-          $pidFile = Join-Path $appPath "app.pid"
-
-          if (!(Test-Path $dllPath)) {
-            Write-Error "Application DLL not found: $dllPath"
-            exit 1
-          }
-
-          $process = Start-Process "dotnet" `
-            -ArgumentList "$dllPath --urls http://localhost:5050" `
-            -WorkingDirectory $appPath `
-            -PassThru
-
-          $process.Id | Out-File $pidFile -Encoding ascii
+          $command = "cd /d `"$appPath`" && start /b dotnet `"$dllPath`" --urls http://localhost:5050 > app.log 2> app-error.log"
+          cmd /c $command
+          Start-Sleep -Seconds 8
 
       # Optional debug step to confirm dotnet process is running
       - name: Debug running process
