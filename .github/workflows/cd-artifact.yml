@@ -71,20 +71,19 @@ jobs:
           Copy-Item "$artifactPath\*" $appPath -Recurse -Force
 
       # Start the application from the published artifact
-      - name: Start application detached
+      - name: Start application via Scheduled Task
         shell: powershell
         run: |
           $appPath = "C:\deploy\app"
           $dllPath = Join-Path $appPath "DemoSonarApp.dll"
-          $pidFile = Join-Path $appPath "app.pid"
-          $stdoutFile = Join-Path $appPath "app.log"
-          $stderrFile = Join-Path $appPath "app-error.log"
+          $taskName = "DemoSonarApp-Run"
       
           if (!(Test-Path $dllPath)) {
             Write-Error "Application DLL not found: $dllPath"
             exit 1
           }
       
+<<<<<<< HEAD
           if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force -ErrorAction SilentlyContinue }
           if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue }
 
@@ -102,6 +101,27 @@ jobs:
 
           $process.Id | Out-File $pidFile -Encoding ascii
 
+=======
+          cmd /c "schtasks /Delete /TN $taskName /F" | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Task did not exist yet. Continuing..."
+          }
+      
+          $taskCommand = "cmd /c cd /d `"$appPath`" && dotnet `"$dllPath`" --urls http://localhost:5050 > app.log 2> app-error.log"
+      
+          cmd /c "schtasks /Create /TN $taskName /SC ONCE /ST 23:59 /TR `"$taskCommand`" /RU $env:USERNAME /F"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to create scheduled task."
+            exit 1
+          }
+      
+          cmd /c "schtasks /Run /TN $taskName"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to run scheduled task."
+            exit 1
+          }
+      
+>>>>>>> f37b5ae793e66bc2d701774a7e56e5e3267ec6fc
           Start-Sleep -Seconds 8
 
           if ($process.HasExited) {
@@ -124,10 +144,11 @@ jobs:
         run: |
           $url = "http://localhost:5050/weatherforecast"
           $maxAttempts = 12
-
+      
           for ($i = 1; $i -le $maxAttempts; $i++) {
             try {
               $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
+              Write-Host "Status code: $($response.StatusCode)"
               if ($response.StatusCode -eq 200) {
                 Write-Host "Application is reachable."
                 exit 0
@@ -135,14 +156,25 @@ jobs:
             }
             catch {
               Write-Host "Attempt $i failed. Retrying in 5 seconds..."
+              Write-Host $_.Exception.Message
             }
-
+      
             Start-Sleep -Seconds 5
           }
-
+      
           Write-Error "Application is not reachable after deployment."
           exit 1
 
+      - name: Show app logs
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "=== APP LOG ==="
+          Get-Content C:\deploy\app\app.log -ErrorAction SilentlyContinue
+      
+          Write-Host "=== APP ERROR LOG ==="
+          Get-Content C:\deploy\app\app-error.log -ErrorAction SilentlyContinue
+          
       # Add deployment summary
       - name: Add summary
         if: always()
