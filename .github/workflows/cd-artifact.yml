@@ -100,7 +100,7 @@ jobs:
       - name: Verify deployed app
         shell: powershell
         run: |
-          $url = "http://localhost:5050/swagger"
+          $url = "http://localhost:5050/weatherforecast"
           $maxAttempts = 12
 
           for ($i = 1; $i -le $maxAttempts; $i++) {
