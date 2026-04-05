@@ -1,0 +1,105 @@
+name: CD Deploy Artifact
+
+on:
+  workflow_run:
+    workflows: ["CI Completed"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy-artifact:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: [self-hosted, Windows, X64]
+
+    steps:
+      # Download the artifact produced by the completed CI workflow run
+      - name: Download build artifact from CI Completed
+        uses: actions/download-artifact@v4
+        with:
+          name: main-build-package
+          path: C:\deploy\artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      # Stop the currently running application if it exists
+      - name: Stop current app
+        shell: powershell
+        run: |
+          $pidFile = "C:\deploy\app\app.pid"
+          if (Test-Path $pidFile) {
+            $pid = Get-Content $pidFile
+            if ($pid) {
+              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+          }
+
+      # Replace deployed files with the new artifact
+      - name: Copy new artifact to deployment folder
+        shell: powershell
+        run: |
+          $artifactPath = "C:\deploy\artifact"
+          $appPath = "C:\deploy\app"
+
+          if (Test-Path $appPath) {
+            Remove-Item "$appPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+          } else {
+            New-Item -ItemType Directory -Path $appPath | Out-Null
+          }
+
+          Copy-Item "$artifactPath\*" $appPath -Recurse -Force
+
+      # Start the application from the published artifact
+      - name: Start application
+        shell: powershell
+        run: |
+          $appPath = "C:\deploy\app"
+          $dllPath = Join-Path $appPath "DemoSonarApp.dll"
+
+          $process = Start-Process "dotnet" `
+            -ArgumentList "$dllPath --urls http://localhost:5050" `
+            -WorkingDirectory $appPath `
+            -PassThru
+
+          $process.Id | Out-File "C:\deploy\app\app.pid" -Encoding ascii
+
+      # Wait and verify the application is running
+      - name: Verify deployed app
+        shell: powershell
+        run: |
+          $url = "http://localhost:5050/swagger"
+          $maxAttempts = 12
+
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            try {
+              $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
+              if ($response.StatusCode -eq 200) {
+                Write-Host "Application is reachable."
+                exit 0
+              }
+            }
+            catch {
+              Write-Host "Attempt $i failed. Retrying in 5 seconds..."
+            }
+
+            Start-Sleep -Seconds 5
+          }
+
+          Write-Error "Application is not reachable after deployment."
+          exit 1
+
+      # Add deployment summary
+      - name: Add summary
+        shell: powershell
+        run: |
+          "## CD Deploy Artifact" >> $env:GITHUB_STEP_SUMMARY
+          "- Source workflow: CI Completed" >> $env:GITHUB_STEP_SUMMARY
+          "- Artifact: main-build-package" >> $env:GITHUB_STEP_SUMMARY
+          "- Deployment target: self-hosted Windows runner" >> $env:GITHUB_STEP_SUMMARY
+          "- URL: http://localhost:5050/swagger" >> $env:GITHUB_STEP_SUMMARY
+          "- Verification: application endpoint checked after deployment" >> $env:GITHUB_STEP_SUMMARY
+          "- Status: deployment completed" >> $env:GITHUB_STEP_SUMMARY
