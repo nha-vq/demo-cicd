@@ -87,28 +87,30 @@ jobs:
       
           if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force -ErrorAction SilentlyContinue }
           if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue }
-      
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = "dotnet"
-          $psi.WorkingDirectory = $appPath
-          $psi.Arguments = "`"$dllPath`" --urls http://localhost:5050"
-          $psi.UseShellExecute = $false
-          $psi.RedirectStandardOutput = $true
-          $psi.RedirectStandardError = $true
-      
-          # Critical: prevent GitHub runner from tracking and killing this process
-          $psi.EnvironmentVariables.Remove("RUNNER_TRACKING_ID")
-      
-          $process = New-Object System.Diagnostics.Process
-          $process.StartInfo = $psi
-          $process.Start() | Out-Null
-      
+
+          # Prevent GitHub runner from tracking and killing the detached process
+          Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
+
+          $process = Start-Process `
+            -FilePath "dotnet" `
+            -ArgumentList @("`"$dllPath`"", "--urls", "http://localhost:5050") `
+            -WorkingDirectory $appPath `
+            -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile `
+            -WindowStyle Hidden `
+            -PassThru
+
           $process.Id | Out-File $pidFile -Encoding ascii
-      
-          $process.StandardOutput.ReadToEndAsync() | Out-Null
-          $process.StandardError.ReadToEndAsync() | Out-Null
-      
+
           Start-Sleep -Seconds 8
+
+          if ($process.HasExited) {
+            Write-Error "Application exited right after start. Check logs."
+            if (Test-Path $stderrFile) {
+              Get-Content $stderrFile -Tail 100
+            }
+            exit 1
+          }
 
       # Optional debug step to confirm dotnet process is running
       - name: Debug running process
