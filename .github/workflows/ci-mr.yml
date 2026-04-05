@@ -21,6 +21,158 @@ jobs:
       # Checkout the source code from the repository
       - name: Checkout source code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Prepare PR diff for AI review
+      - name: Prepare PR diff
+        shell: bash
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=1
+
+          git diff --unified=1 "origin/${{ github.base_ref }}...HEAD" > pr.diff || true
+
+          echo "Diff size:"
+          wc -c pr.diff || true
+
+          if [ ! -s pr.diff ]; then
+            echo "No meaningful diff found." > pr.diff
+          fi
+
+      # AI-assisted code review on PR diff
+      - name: AI code review
+        continue-on-error: true
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        shell: bash
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+          if not api_key:
+              print("OPENAI_API_KEY is missing. Skipping AI review.")
+              raise SystemExit(0)
+
+          with open("pr.diff", "r", encoding="utf-8", errors="ignore") as f:
+              diff_text = f.read()
+
+          # Keep prompt size controlled for stability/cost
+          max_chars = 15000
+          truncated = False
+          if len(diff_text) > max_chars:
+              diff_text = diff_text[:max_chars]
+              truncated = True
+
+          pr_title = os.environ.get("PR_TITLE", "")
+          pr_url = os.environ.get("PR_URL", "")
+          pr_author = os.environ.get("PR_AUTHOR", "")
+          pr_number = os.environ.get("PR_NUMBER", "")
+          base_ref = os.environ.get("BASE_REF", "")
+          head_ref = os.environ.get("HEAD_REF", "")
+
+          prompt = f"""
+          Review this pull request diff as a senior .NET reviewer.
+
+          Context:
+          - Repository type: .NET 8 application with unit tests
+          - PR number: {pr_number}
+          - PR title: {pr_title}
+          - PR URL: {pr_url}
+          - Author: {pr_author}
+          - Base branch: {base_ref}
+          - Head branch: {head_ref}
+
+          Instructions:
+          - Focus on correctness, maintainability, testability, and basic security/safety.
+          - Ignore minor formatting or style-only issues unless they affect readability significantly.
+          - Be concise and actionable.
+          - If there are no important issues, say so clearly.
+          - Suggest missing unit tests when relevant.
+          - Output in markdown using exactly this structure:
+
+          ## AI Code Review Summary
+          ### 1. What changed
+          ### 2. Potential risks
+          ### 3. Suggestions
+          ### 4. Recommended test cases
+
+          Pull request diff:
+          {diff_text}
+          """
+
+          body = {
+              "model": "gpt-5-mini",
+              "input": prompt
+          }
+
+          req = urllib.request.Request(
+              "https://api.openai.com/v1/responses",
+              data=json.dumps(body).encode("utf-8"),
+              headers={
+                  "Content-Type": "application/json",
+                  "Authorization": f"Bearer {api_key}",
+              },
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=120) as resp:
+                  data = json.loads(resp.read().decode("utf-8"))
+          except urllib.error.HTTPError as e:
+              detail = e.read().decode("utf-8", errors="ignore")
+              print(f"OpenAI API HTTP error: {e.code}")
+              print(detail)
+              raise SystemExit(0)
+          except Exception as e:
+              print(f"OpenAI API request failed: {e}")
+              raise SystemExit(0)
+
+          review_text = data.get("output_text", "").strip()
+
+          if not review_text:
+              outputs = data.get("output", [])
+              chunks = []
+              for item in outputs:
+                  for content in item.get("content", []):
+                      if content.get("type") == "output_text":
+                          chunks.append(content.get("text", ""))
+              review_text = "\n".join(chunks).strip()
+
+          if not review_text:
+              review_text = "## AI Code Review Summary\nUnable to generate review content."
+
+          if truncated:
+              review_text += "\n\n> Note: Diff was truncated before sending to AI."
+
+          with open("ai-review-summary.md", "w", encoding="utf-8") as f:
+              f.write(review_text)
+
+          print(review_text)
+          PY
+
+      # Append AI review to GitHub step summary
+      - name: Publish AI review summary
+        if: always()
+        shell: bash
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## AI Review" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f ai-review-summary.md ]; then
+            cat ai-review-summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "AI review was skipped or no summary was generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Install the required .NET SDK version
       - name: Setup .NET
@@ -126,6 +278,7 @@ jobs:
         if: always()
         run: |
           echo "## CI MR Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- AI review: completed or skipped safely" >> $GITHUB_STEP_SUMMARY
           echo "- Build: completed" >> $GITHUB_STEP_SUMMARY
           echo "- Unit tests: see report in Checks tab" >> $GITHUB_STEP_SUMMARY
-          echo "- Coverage: validated against 70% threshold" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage: validated against 60% threshold" >> $GITHUB_STEP_SUMMARY
