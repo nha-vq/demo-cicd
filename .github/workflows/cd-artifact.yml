@@ -54,11 +54,13 @@ jobs:
           cmd /c "schtasks /End /TN $taskName" | Out-Null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Task $taskName was not running or did not exist. Continuing..."
+            $global:LASTEXITCODE = 0
           }
 
           cmd /c "schtasks /Delete /TN $taskName /F" | Out-Null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Task $taskName did not exist. Continuing..."
+            $global:LASTEXITCODE = 0
           }
 
           # Extra cleanup: kill any process still listening on deploy port.
@@ -69,6 +71,7 @@ jobs:
               Stop-Process -Id $listeningPid -Force -ErrorAction SilentlyContinue
             }
           }
+          $global:LASTEXITCODE = 0
 
       # Replace deployed files with the new artifact
       - name: Copy new artifact to deployment folder
