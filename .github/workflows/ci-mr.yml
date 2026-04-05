@@ -128,4 +128,4 @@ jobs:
           echo "## CI MR Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Build: completed" >> $GITHUB_STEP_SUMMARY
           echo "- Unit tests: see report in Checks tab" >> $GITHUB_STEP_SUMMARY
-          echo "- Coverage: validated against 60% threshold" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage: validated against 70% threshold" >> $GITHUB_STEP_SUMMARY
