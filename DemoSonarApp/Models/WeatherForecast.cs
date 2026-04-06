@@ -1,4 +1,4 @@
-namespace DemoSonarApp;
+namespace DemoSonarApp.Models;
 
 public class WeatherForecast
 {

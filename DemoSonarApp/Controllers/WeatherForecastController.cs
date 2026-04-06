@@ -1,3 +1,4 @@
+using DemoSonarApp.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DemoSonarApp.Controllers;
